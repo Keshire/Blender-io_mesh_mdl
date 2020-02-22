@@ -32,136 +32,199 @@ from bpy_extras.image_utils import load_image
 
 class material:
 	def __init__(self, file):
-		file.read(4) #Don't know what this is doing
-		self.Name = read_string(file) #Material Name
-		file.read(4) #Don't know what this is doing
-		
-		self.material = bpy.data.materials.new(name=self.Name)
+		print(file.read(4)) #Don't know what this is doing
+		self.material = bpy.data.materials.new(name=read_string(file)) #Material Name
+		print(file.read(4)) #Don't know what this is doing
+
 		self.material.use_nodes = True
 		
-		self.Type = struct.unpack('<I', file.read(4))[0]
-		if self.Type == 1:
-			file.read(4) #Hash?
-		elif self.Type == 2:
-			file.read(4) #Hash?
-		elif self.Type == 7:
-			file.read(4) #Hash?
-			self.unk1 = struct.unpack('<I', file.read(4))[0]
-			self.unk2 = struct.unpack('<ffff', file.read(16))[0]
-			file.read(4) #Hash?
-		elif self.Type == 11:
-			file.read(4) #Hash?
-			self.unk1 = struct.unpack('<I', file.read(4))[0]
-			self.unk2 = struct.unpack('<f', file.read(4))[0]
-			file.read(4) #Hash?
-			self.unk1 = struct.unpack('<I', file.read(4))[0]
-			self.unk2 = struct.unpack('<ffff', file.read(16))[0]
-			file.read(4) #Hash?
-			
-		self.sTextures = struct.unpack('<I', file.read(4))[0]
+		nodes = self.material.node_tree.nodes
 		
+		for node in nodes:
+			nodes.remove(node)
+		
+		#Texture Nodes
+		diffuse_texture = nodes.new(type='ShaderNodeTexImage')
+		normal_texture = nodes.new(type='ShaderNodeTexImage')
+		specular_texture = nodes.new(type='ShaderNodeTexImage')
+		emission_texture = nodes.new(type='ShaderNodeTexImage')
+		environment_texture = nodes.new(type='ShaderNodeTexImage')
+		
+		#Shader Nodes
+		diffuse = nodes.new(type='ShaderNodeBsdfDiffuse')
+		normal = nodes.new(type='ShaderNodeNormalMap')
+		specular = nodes.new(type='ShaderNodeRGBCurve')
+		emission = nodes.new(type='ShaderNodeEmission')
+		mix = nodes.new(type='ShaderNodeMixShader')
+		add = nodes.new(type='ShaderNodeAddShader')
+		output = nodes.new(type='ShaderNodeOutputMaterial')
+		
+		refraction = nodes.new(type='ShaderNodeBsdfRefraction') # not sure if needed
+		glossy = nodes.new(type='ShaderNodeBsdfGlossy')
+
+		links = self.material.node_tree.links
+		
+		#Texture Links
+		links.new(diffuse_texture.outputs[0],diffuse.inputs[0])
+		links.new(normal_texture.outputs[0],normal.inputs[1])
+		links.new(specular_texture.outputs[0],specular.inputs[1])
+		links.new(emission_texture.outputs[0],emission.inputs[1])
+		links.new(environment_texture.outputs[0],glossy.inputs[0])
+		
+		#Shader Links
+		links.new(diffuse.outputs[0], mix.inputs[1])
+		links.new(glossy.outputs[0], mix.inputs[2])
+		links.new(specular.outputs[0], mix.inputs[0])
+		
+		links.new(normal.outputs[0], diffuse.inputs[2])
+		links.new(normal.outputs[0], glossy.inputs[2])
+		
+		links.new(mix.outputs[0], add.inputs[0])
+		links.new(emission.outputs[0], add.inputs[1])
+		
+		links.new(add.outputs[0], output.inputs[0])
+		
+		Type = struct.unpack('<I', file.read(4))[0]
+		print('Material Type: '+str(Type))
+		
+		#Honestly, no idea what this data is??
+		if Type == 1:
+			file.read(4) #Hash?
+		elif Type == 2:
+			file.read(4) #Hash?
+		elif Type == 7:
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			
+		elif Type == 11:
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			
+		sTextures = struct.unpack('<I', file.read(4))[0] #size of texture block in bytes
+		
+		texture = []
 		for i in range(6):
-			self.texture = read_string(file)
-			print(self.texture)
-			if self.texture != "":
-				self.texName = os.path.basename(self.texture)
-				self.tex = bpy.data.textures.new(name=self.texName + '.dds', type='IMAGE')
-				#self.mtex = self.material.texture_slots.add()
-				#self.mtex.texture = self.tex
-				#self.mtex.texture_coords = 'UV'
+			texture_name = read_string(file)
+			print(texture_name)
+			if texture_name != "":
+				texture_path = os.path.basename(texture_name)
+				texture.append(bpy.data.textures.new(name=texture_path + '.dds', type='IMAGE'))
 
-		self.unk4 = struct.unpack('<ff', file.read(8))[0]
+				
+		#Honestly, no idea what this data is??		
+		struct.unpack('<f', file.read(4))[0]
+		struct.unpack('<f', file.read(4))[0]
 
-		#if self.Type == 0:
-		if self.Type == 2:
+		#Honestly, no idea what this data is??
+		if Type == 2:
 			file.read(4) #Hash?
-			self.unk1 = struct.unpack('<I', file.read(4))[0]
-			self.unk2 = struct.unpack('<f', file.read(4))[0]
-		elif self.Type == 7:
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+		elif Type == 7:
 			file.read(4) #Hash?
-			self.unk1 = struct.unpack('<I', file.read(4))[0]
-			self.unk2 = struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
 			
 			file.read(4) #Hash?
-			self.unk3 = struct.unpack('<I', file.read(4))[0]
-			self.unk4 = struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
 			
 			file.read(4) #Hash?
-			self.unk5 = struct.unpack('<I', file.read(4))[0]
-			self.unk6 = struct.unpack('<ffff', file.read(16))[0]
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
 			
 			file.read(4) #Hash?
-			self.unk7 = struct.unpack('<I', file.read(4))[0]
-			self.unk8 = struct.unpack('<ffff', file.read(16))[0]	
-
-			file.read(4) #Hash?
-			self.unk9 = struct.unpack('<I', file.read(4))[0]
-			self.unk10 = struct.unpack('<f', file.read(4))[0]
-		elif self.Type == 11:
-			file.read(4) #Hash?
-			self.unk1 = struct.unpack('<I', file.read(4))[0]
-			self.unk2 = struct.unpack('<ffff', file.read(16))[0]
-			
-			file.read(4) #Hash?
-			self.unk3 = struct.unpack('<I', file.read(4))[0]
-			self.unk4 = struct.unpack('<f', file.read(4))[0]
-			
-			file.read(4) #Hash?
-			self.unk3 = struct.unpack('<I', file.read(4))[0]
-			self.unk4 = struct.unpack('<f', file.read(4))[0]
-			
-			file.read(4) #Hash?
-			self.unk3 = struct.unpack('<I', file.read(4))[0]
-			self.unk4 = struct.unpack('<f', file.read(4))[0]
-			
-			file.read(4) #Hash?
-			self.unk3 = struct.unpack('<I', file.read(4))[0]
-			self.unk4 = struct.unpack('<f', file.read(4))[0]
-			
-			file.read(4) #Hash?
-			self.unk5 = struct.unpack('<I', file.read(4))[0]
-			self.unk6 = struct.unpack('<ffff', file.read(16))[0]
-			
-			file.read(4) #Hash?
-			self.unk7 = struct.unpack('<I', file.read(4))[0]
-			self.unk8 = struct.unpack('<ffff', file.read(16))[0]	
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
 
 			file.read(4) #Hash?
-			self.unk9 = struct.unpack('<I', file.read(4))[0]
-			self.unk10 = struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+		elif Type == 11:
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+
+			file.read(4) #Hash?
+			struct.unpack('<I', file.read(4))[0]
+			struct.unpack('<f', file.read(4))[0]
+			
 class mesh_split:
 	def __init__(self, file, animated):
-		self.unk = struct.unpack('<I', file.read(4))[0]
+		struct.unpack('<I', file.read(4))[0]
 		file.read(1)	#pad
-		self.nTris = struct.unpack('<I', file.read(4))[0]
-		self.pStart = struct.unpack('<I', file.read(4))[0]
-		self.Origin = struct.unpack('<6f', file.read(24))[0]
+		
+		self.nTris = struct.unpack('<I', file.read(4))[0] # passed outside class
+		
+		pStart = struct.unpack('<I', file.read(4))[0] #offset pointer
+		
+		Origin = struct.unpack('<6f', file.read(24))[0]
 		if animated:
-			self.unk2 = struct.unpack('<I', file.read(4))[0]			
-class matrix:
-    fmt = 'f' * 10
-
-    def __init__(self, file):
-        _s = file.read(struct.calcsize(self.fmt))
-        self.mat = struct.unpack(self.fmt, _s)
-class vect:
-	fmt = '7f'
-
-	def __init__(self, file):
-		_s = file.read(struct.calcsize(self.fmt))
-		self.v = struct.unpack(self.fmt, _s)
+			struct.unpack('<I', file.read(4))[0]
+					
 class triangle:
 	def __init__(self, file):
 		self.v1 = struct.unpack('<h', file.read(2))[0]
 		self.v2 = struct.unpack('<h', file.read(2))[0]
 		self.v3 = struct.unpack('<h', file.read(2))[0]
-class node:
-	def __init__(self, file):
-		nNodes = struct.unpack('<I', file.read(4))[0]
-		Strings = []
-		for i in range(nNodes):
-			Strings.extend([read_string(file)])
-
+		
 class BuildSkeleton:
 
 		fName = []
@@ -267,172 +330,175 @@ class mesh:
 			
 		file.read(1)	#pad
 
-		self.iMesh 		= struct.unpack('<I', file.read(4))[0]
+		iMesh 		= struct.unpack('<I', file.read(4))[0]
 		self.iMaterial 	= struct.unpack('<I', file.read(4))[0]
-		self.nTris 		= struct.unpack('<I', file.read(4))[0]
-		self.unk2 		= struct.unpack('<I', file.read(4))[0]
-		self.nVerts 	= struct.unpack('<I', file.read(4))[0]
+		nTris 		= struct.unpack('<I', file.read(4))[0]
+		
+		struct.unpack('<I', file.read(4))[0] #unknown
+		
+		nVerts 	= struct.unpack('<I', file.read(4))[0]
 		
 		if not animated:
 			Origin2 = matrix(file)
 		
-		self.nMeshSplit = struct.unpack('<I', file.read(4))[0]
-		self.MeshSplit = []
-		self.nTotalTris = 0
-		for i in range(self.nMeshSplit):
+		nMeshSplit = struct.unpack('<I', file.read(4))[0]
+		MeshSplit = []
+		nTotalTris = 0
+		for i in range(nMeshSplit):
 			if animated:
-				self.MeshSplit.extend([mesh_split(file, animated)])
+				MeshSplit.extend([mesh_split(file, animated)])
 			else:
-				self.MeshSplit.extend([mesh_split(file, animated)])
-			self.nTotalTris = self.nTotalTris + self.MeshSplit[i].nTris
+				MeshSplit.extend([mesh_split(file, animated)])
+			nTotalTris = nTotalTris + MeshSplit[i].nTris
 		
 		
 		#An Array of bones
 		if animated:
-			self.BoneID = []
-			self.nCount = struct.unpack('<I', file.read(4))[0]
-			for j in range(self.nCount):
-				self.nCount2 = struct.unpack('<I', file.read(4))[0]
-				for i in range(self.nCount2):
-					self.BoneID = [struct.unpack('<I', file.read(4))[0]]
+			BoneID = []
+			nCount = struct.unpack('<I', file.read(4))[0]
+			for j in range(nCount):
+				nCount2 = struct.unpack('<I', file.read(4))[0]
+				for i in range(nCount2):
+					BoneID = [struct.unpack('<I', file.read(4))[0]]
 
 		
 		#XYZ, Unk, UV
-		self.vert_1 = []
-		self.vert_indice = []
-		for i in range(self.nVerts):
+		vert_1 = []
+		vert_indice = []
+		for i in range(nVerts):
 			if animated:
-				self.vert_1.extend([avect16_1(file)]) #An Array
+				vert_1.extend([avect16_1(file)]) #An Array
 			else:
-				self.vert_1.extend([vect16_1(file)])
-			self.vert_indice.append([self.vert_1[i].v[0], self.vert_1[i].v[1], self.vert_1[i].v[2]]) #An Index of xyz
+				vert_1.extend([vect16_1(file)])
+			
+			vert_indice.append([vert_1[i].v[0], vert_1[i].v[1], vert_1[i].v[2]]) #An Index of xyz
 
 			
-		self.vert_2 = []
-		self.vert_2_table = []
-		for i in range(self.nVerts):
-			self.vert_2.extend([vect16_2(file)]) #An Array
-			self.vert_2_table.extend([self.vert_2[i].v[0], self.vert_2[i].v[1], self.vert_2[i].v[2]]) #an Index of v0,1,2
+		vert_2 = []
+		vert_2_table = []
+		for i in range(nVerts):
+			vert_2.extend([vect16_2(file)]) #An Array
+			vert_2_table.extend([vert_2[i].v[0], vert_2[i].v[1], vert_2[i].v[2]]) #an Index of v0,1,2
 			#v[3] is always 0.0
-			#v[4|5|6|7] is unknown, and I'm not even sure their floats...
+			#v[4|5|6|7] is unknown, and I'm not even sure these are floats...
 		
 		
 		#Morphing stuff??
 		if animated:
-			self.nArray = struct.unpack('<?', file.read(1))[0]
-			if self.nArray == True:
-				for i in range(self.nVerts):
+			nArray = struct.unpack('<?', file.read(1))[0]
+			if nArray == True:
+				for i in range(nVerts):
 					file.read(8)
 
-		self.face = []
-		self.face_indice = []
-		for i in range(self.nTotalTris):
-			self.face.extend([triangle(file)])
-			self.face_indice.append([self.face[i].v1, self.face[i].v2, self.face[i].v3])
+		face = []
+		face_indice = []
+		for i in range(nTotalTris):
+			face.extend([triangle(file)])
+			face_indice.append([face[i].v1, face[i].v2, face[i].v3])
 			
 			
 		print('---Dynamic Cloth Stuff---')
 		#Dynamic Clothing Meshes go here. And are not supported at the moment...
-		self.nCloth = struct.unpack('<I', file.read(4))[0]
-		for i in range(self.nCloth):
+		nCloth = struct.unpack('<I', file.read(4))[0]
+		for i in range(nCloth):
 			#This is going to look reallll ugly for now.
-			self.nCloth1 = struct.unpack('<I', file.read(4))[0]
-			self.nCloth2 = struct.unpack('<I', file.read(4))[0]
-			self.nCVerts = struct.unpack('<I', file.read(4))[0]
-			self.nCloth4 = struct.unpack('<I', file.read(4))[0]
-			self.nCloth5 = struct.unpack('<I', file.read(4))[0]
-			self.nCTris = struct.unpack('<I', file.read(4))[0]
-			self.nCloth7 = struct.unpack('<I', file.read(4))[0]
-			self.nCloth8 = struct.unpack('<I', file.read(4))[0]
-			self.nCloth9 = struct.unpack('<I', file.read(4))[0]
+			nCloth1 = struct.unpack('<I', file.read(4))[0]
+			nCloth2 = struct.unpack('<I', file.read(4))[0]
+			nCVerts = struct.unpack('<I', file.read(4))[0]
+			nCloth4 = struct.unpack('<I', file.read(4))[0]
+			nCloth5 = struct.unpack('<I', file.read(4))[0]
+			nCTris  = struct.unpack('<I', file.read(4))[0]
+			nCloth7 = struct.unpack('<I', file.read(4))[0]
+			nCloth8 = struct.unpack('<I', file.read(4))[0]
+			nCloth9 = struct.unpack('<I', file.read(4))[0]
 			
 			if animated:
-				for i in range(self.nCVerts):
+				for i in range(nCVerts):
 					struct.unpack('<I', file.read(4))[0]
-				for i in range(self.nCVerts):
+				for i in range(nCVerts):
 					struct.unpack('<4I', file.read(4*4))[0]
 				
-			self.nCloth12 = struct.unpack('<I', file.read(4))[0]
-			self.nCloth13 = struct.unpack('<I', file.read(4))[0]
-			self.nCloth14 = struct.unpack('<I', file.read(4))[0]
-			self.nCloth15 = struct.unpack('<I', file.read(4))[0]
-			self.nCloth16 = struct.unpack('<I', file.read(4))[0]
+			nCloth12 = struct.unpack('<I', file.read(4))[0]
+			nCloth13 = struct.unpack('<I', file.read(4))[0]
+			nCloth14 = struct.unpack('<I', file.read(4))[0]
+			nCloth15 = struct.unpack('<I', file.read(4))[0]
+			nCloth16 = struct.unpack('<I', file.read(4))[0]
 			
 			struct.unpack('<6f', file.read(4*6))[0]
 			
 			#Couple booleans
-			self.nCloth17 = struct.unpack('<?', file.read(1))[0]
-			self.nCloth18 = struct.unpack('<?', file.read(1))[0]
+			nCloth17 = struct.unpack('<?', file.read(1))[0]
+			nCloth18 = struct.unpack('<?', file.read(1))[0]
 			
-			self.vCloth = [] #list
-			for i in range(self.nCVerts):
+			vCloth = [] #list
+			for i in range(nCVerts):
 				#Mesh Vertices
-				self.vCloth.append([struct.unpack('<f', file.read(4))[0], 
+				vCloth.append([struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0]])
 			print('---Debug Per Vertex Float sets---')
-			self.vDebug = []	
-			for i in range(self.nCVerts):
-				self.vDebug.append([struct.unpack('<f', file.read(4))[0], 
+			vDebug = []	
+			for i in range(nCVerts):
+				vDebug.append([struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0]])
-				print('Debug 1:', self.vDebug[i])				
-			self.vDebug = []
-			for i in range(self.nCVerts):
-				self.vDebug.append([struct.unpack('<f', file.read(4))[0], 
+				print('Debug 1:', vDebug[i])				
+			vDebug = []
+			for i in range(nCVerts):
+				vDebug.append([struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0]])
-				print('Debug 2:', self.vDebug[i])				
-			for i in range(self.nCVerts):
-				self.vDebug = struct.unpack('<f', file.read(4))[0]
-				print('Debug 3:', self.vDebug)				
-			self.fCloth = []
-			for i in range(self.nCTris):
+				print('Debug 2:', vDebug[i])				
+			for i in range(nCVerts):
+				vDebug = struct.unpack('<f', file.read(4))[0]
+				print('Debug 3:', vDebug)				
+			fCloth = []
+			for i in range(nCTris):
 				#Mesh Faces
-				self.fCloth.append([struct.unpack('<h', file.read(2))[0], 
+				fCloth.append([struct.unpack('<h', file.read(2))[0], 
 									struct.unpack('<h', file.read(2))[0], 
 									struct.unpack('<h', file.read(2))[0]])									
-			for i in range(self.nCloth7):
+			for i in range(nCloth7):
 				file.read(2*2)
-			for i in range(self.nCloth7):
+			for i in range(nCloth7):
 				struct.unpack('<4f', file.read(4*4))[0]
 			
 			if animated:
-				for i in range(self.nCloth8):
+				for i in range(nCloth8):
 					file.read(1)
 			else:
-				for i in range(self.nCVerts):
+				for i in range(nCVerts):
 					file.read(1)
 					
-			for i in range(self.nCloth12):
+			for i in range(nCloth12):
 				file.read(4*8)
-			for i in range(self.nCloth14):
+			for i in range(nCloth14):
 				file.read(4*14)
 				
 			if animated:	
-				for i in range(self.nCloth8 - self.nCloth5):
+				for i in range(nCloth8 - nCloth5):
 					file.read(4*2)
 			else:
-				for i in range(self.nCVerts - self.nCloth5):
+				for i in range(nCVerts - nCloth5):
 					file.read(4*2)
 		print('--End of Dynamic Cloth Stuff--')
 		
 		#Build the Mesh from lists
 		if animated:
 			self.mesh = bpy.data.meshes.new("AnimatedMesh")
-			self.mesh.from_pydata(self.vert_indice, [], self.face_indice)
-			self.mesh.vertices.foreach_set('normal', self.vert_2_table)
-			self.uv_layer = self.mesh.uv_layers.new(name="AnimatedMesh")
+			self.mesh.from_pydata(vert_indice, [], face_indice)
+			self.mesh.vertices.foreach_set('normal', vert_2_table)
+			uv_layer = self.mesh.uv_layers.new(name="AnimatedMesh")
 		else:
 			self.mesh = bpy.data.meshes.new(self.Name)
-			self.mesh.from_pydata(self.vert_indice, [], self.face_indice)
-			self.mesh.vertices.foreach_set('normal', self.vert_2_table)
-			self.uv_layer = self.mesh.uv_layers.new(name=self.Name)
+			self.mesh.from_pydata(vert_indice, [], face_indice)
+			self.mesh.vertices.foreach_set('normal', vert_2_table)
+			uv_layer = self.mesh.uv_layers.new(name=self.Name)
 
 		for loop in self.mesh.loops:
-			self.uv_layer.data[loop.index].uv = (self.vert_1[loop.vertex_index].v[4],self.vert_1[loop.vertex_index].v[5])
+			uv_layer.data[loop.index].uv = (vert_1[loop.vertex_index].v[4],-vert_1[loop.vertex_index].v[5]) #Flip uv on y axis. Maps correctly but now it's not normalized?
 
 		
 ##################
@@ -522,7 +588,14 @@ class MDLImporter(bpy.types.Operator):
 ###########
 ## UTILS ##
 ###########
-		
+
+def node(file):
+	nNodes = struct.unpack('<I', file.read(4))[0]
+	Strings = []
+	for i in range(nNodes):
+		Strings.extend([read_string(file)])
+		print(Strings[i])
+
 def HalfToFloat(h):
     s = int((h >> 15) & 0x00000001)    # sign
     e = int((h >> 10) & 0x0000001f)    # exponent
@@ -558,6 +631,15 @@ def read_string(file):
 
     #remove the null character from the string
     return str(s, "utf-8", "replace")
+
+def matrix(file):
+	fmt = 'f' * 10
+	_s = file.read(struct.calcsize(fmt))
+	matrix = struct.unpack(fmt, _s)	
+def vect(file):
+	fmt = '7f'
+	_s = file.read(struct.calcsize(fmt))
+	v = struct.unpack(fmt, _s)
 	
 #This is a HACK..
 class vect16_1:
@@ -631,7 +713,8 @@ class vect16_2:
 									self.vu[2], 
 									self.vu[3])
 		self.v = struct.unpack('4f', self.vp)
-		
+
+#not used anywhere yet...		
 class matrix_complex:
 	fmt = '6hf6h4f'
 	
