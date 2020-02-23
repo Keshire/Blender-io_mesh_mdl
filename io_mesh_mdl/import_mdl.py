@@ -32,9 +32,9 @@ from bpy_extras.image_utils import load_image
 
 class material:
 	def __init__(self, file):
-		print(file.read(4)) #Don't know what this is doing
+		file.read(4) #Don't know what this is doing
 		self.material = bpy.data.materials.new(name=read_string(file)) #Material Name
-		print(file.read(4)) #Don't know what this is doing
+		file.read(4) #Don't know what this is doing
 
 		self.material.use_nodes = True
 		
@@ -85,7 +85,7 @@ class material:
 		links.new(add.outputs[0], output.inputs[0])
 		
 		Type = struct.unpack('<I', file.read(4))[0]
-		print('Material Type: '+str(Type))
+		#print('Material Type: '+str(Type))
 		
 		#Honestly, no idea what this data is??
 		if Type == 1:
@@ -225,101 +225,6 @@ class triangle:
 		self.v2 = struct.unpack('<h', file.read(2))[0]
 		self.v3 = struct.unpack('<h', file.read(2))[0]
 		
-class BuildSkeleton:
-
-		fName = []
-		fBone = []
-		Name = []
-		Parent = []
-		Matrix = []
-		Transform = []
-
-		def __init__(self, file):
-			self.nFlags = struct.unpack( 'B', file.read(1))[0]
-			for i in range(self.nFlags):
-				self.fName.append([struct.unpack('<I', file.read(4))[0]])
-				self.fBone.append([struct.unpack('<i', file.read(4))[0]])
-				print('Bone:', self.fName[i], 'BoneID', self.fBone[i])
-				
-			self.nBones1 = struct.unpack('<I', file.read(4))[0]
-			for i in range(self.nBones1):
-				self.Name.append([struct.unpack('<I', file.read(4))[0]])
-				self.Parent.extend([struct.unpack('<i', file.read(4))[0]])
-				print('Bone:', i, self.Name[i], 'Parent', self.Parent[i])
-	
-			self.nBones2 = struct.unpack('<I', file.read(4))[0]
-			self.TransformTest = []
-			for i in range(self.nBones2):
-				self.Matrix.append([struct.unpack('<f', file.read(4))[0],
-									struct.unpack('<f', file.read(4))[0],
-									struct.unpack('<f', file.read(4))[0],
-									struct.unpack('<f', file.read(4))[0],
-									struct.unpack('<f', file.read(4))[0], #X
-									struct.unpack('<f', file.read(4))[0], #Y
-									struct.unpack('<f', file.read(4))[0], #Z
-									struct.unpack('<f', file.read(4))[0],
-									struct.unpack('<f', file.read(4))[0],
-									struct.unpack('<f', file.read(4))[0],
-									struct.unpack('<f', file.read(4))[0]])
-									
-				self.bTransform = mathutils.Quaternion((self.Matrix[i][3],self.Matrix[i][0],self.Matrix[i][1],self.Matrix[i][2]))
-				self.Transform.extend([self.bTransform])
-
-			#Debug#
-			for i in range(self.nBones2): 
-				print('Bone',i,': Unknown[',self.Matrix[i][0],self.Matrix[i][1],self.Matrix[i][2],self.Matrix[i][3],'] XYZ[',
-						self.Matrix[i][4],self.Matrix[i][5],self.Matrix[i][6],'] Unknown[',
-						self.Matrix[i][7],self.Matrix[i][8],self.Matrix[i][9],self.Matrix[i][10],']')
-						
-						
-			self.armdata = bpy.data.armatures.new('SkelNewTest')
-			self.armature = bpy.data.objects.new('SkelTest', self.armdata)
-			bpy.context.collection.objects.link(self.armature)
-			
-			for i in bpy.context.collection.objects: i.select_set(False) #deselect all objects
-			self.armature.select_set(True)
-			bpy.context.view_layer.objects.active = self.armature
-			
-			for i in range(self.nBones2):
-				bpy.ops.object.mode_set(mode='EDIT')
-				self.newbone = self.armature.data.edit_bones.new(str(self.Name[i]))
-				self.parentbone = None
-				
-				self.pos_x = self.Matrix[i][4]
-				self.pos_y = self.Matrix[i][5]
-				self.pos_z = self.Matrix[i][6]
-				
-				
-				if self.Parent[i] != -1:
-					self.parentbone = self.armature.data.edit_bones[self.Parent[i]]
-					self.newbone.parent = self.parentbone
-					
-					self.rotmatrix = self.Transform[i].to_matrix().to_4x4().to_3x3()
-					self.newbone.transform(self.Transform[i].to_matrix().to_4x4(),True,True)
-					
-					self.newbone.head.x = self.parentbone.head.x + self.pos_x
-					self.newbone.head.y = self.parentbone.head.y + self.pos_y
-					self.newbone.head.z = self.parentbone.head.z + self.pos_z
-
-					self.newbone.tail.x = self.parentbone.head.x + (self.pos_x * self.rotmatrix[1][0])
-					self.newbone.tail.y = self.parentbone.head.y + (self.pos_y * self.rotmatrix[1][1])
-					self.newbone.tail.z = self.parentbone.head.z + (self.pos_z * self.rotmatrix[1][2])
-					
-					
-				else: #No parent
-				
-					self.rotmatrix = self.Transform[i].to_matrix().to_3x3()
-					
-					self.newbone.head.x = self.pos_x
-					self.newbone.head.y = self.pos_y
-					self.newbone.head.z = self.pos_z
-
-					self.newbone.tail.x = self.pos_x * self.rotmatrix[1][0]
-					self.newbone.tail.y = self.pos_y * self.rotmatrix[1][1]
-					self.newbone.tail.z = self.pos_z * self.rotmatrix[1][2]
-
-			bpy.context.view_layer.update()
-
 class mesh:
 	def __init__(self, file, animated):
 	
@@ -589,12 +494,77 @@ class MDLImporter(bpy.types.Operator):
 ## UTILS ##
 ###########
 
+def BuildSkeleton(file):
+
+		DummyName = {}
+		DummyID = {}
+		Name = {}
+		Parent = {}
+		local_matrices = {}
+		
+		armdata = bpy.data.armatures.new('Skeleton')
+		armature = bpy.data.objects.new('Armature', armdata)
+		bpy.context.collection.objects.link(armature)
+		
+		for i in bpy.context.collection.objects: i.select_set(False) #deselect all objects
+		armature.select_set(True)
+		bpy.context.view_layer.objects.active = armature
+		bpy.ops.object.mode_set(mode='EDIT')
+
+		dummies = struct.unpack('B', file.read(1))[0]
+		for i in range(dummies):
+			DummyName[i] = struct.unpack('<I', file.read(4))[0]
+			DummyID[i] = struct.unpack('<i', file.read(4))[0]
+			
+		hierarchy = struct.unpack('<I', file.read(4))[0]
+		for i in range(hierarchy):
+			Name[i] = struct.unpack('<I', file.read(4))[0]
+			Parent[i] = struct.unpack('<i', file.read(4))[0]
+		
+		
+		Bones = struct.unpack('<I', file.read(4))[0]
+		for i in range(Bones):
+			#create bone
+			bone = armature.data.edit_bones.new(str(Name[i]))
+			bone.length = 0.05
+			
+			#parent bone
+			if Parent[i] != -1:
+				bone.parent = armature.data.edit_bones[Parent[i]]
+			
+			#Pull data from file
+			Matrix = [	struct.unpack('<f', file.read(4))[0],  #Matrix[0] X?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[1] Y?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[2] Z?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[3] scale? Maybe W?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[4] X?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[5] Y?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[6] Z?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[7] scale? Maybe W?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[8]
+						struct.unpack('<f', file.read(4))[0],  #Matrix[9]
+						struct.unpack('<f', file.read(4))[0]]  #Matrix[10]
+		
+			print('Parent:'+str(Parent[i])+',Bone:'+str(i)+','+str((Matrix[0],Matrix[1],Matrix[2],Matrix[3],Matrix[4],Matrix[5],Matrix[6],Matrix[7],Matrix[8],Matrix[9])))
+			
+			#helpers
+			test_vector = mathutils.Vector((Matrix[4],Matrix[5],Matrix[6]))
+			test_quaternion = mathutils.Quaternion((Matrix[3],Matrix[0],Matrix[1],Matrix[2]))
+			test_scale = mathutils.Vector((Matrix[7],Matrix[8],Matrix[9]))
+			local_matrices[bone.name] = matrix_trs(test_vector,test_quaternion,test_scale)
+			
+
+		#assumes only one root bone
+		root_bone = armature.data.edit_bones[0]
+		root_bone.matrix = local_matrices[root_bone.name]
+		calculate_armature_matrices(local_matrices,root_bone)
+		bpy.context.view_layer.update()
+
 def node(file):
 	nNodes = struct.unpack('<I', file.read(4))[0]
 	Strings = []
 	for i in range(nNodes):
 		Strings.extend([read_string(file)])
-		print(Strings[i])
 
 def HalfToFloat(h):
     s = int((h >> 15) & 0x00000001)    # sign
@@ -713,42 +683,14 @@ class vect16_2:
 									self.vu[2], 
 									self.vu[3])
 		self.v = struct.unpack('4f', self.vp)
-
-#not used anywhere yet...		
-class matrix_complex:
-	fmt = '6hf6h4f'
 	
-	def __init__(self, file):
-		_s = file.read(struct.calcsize(self.fmt))
-		self.temp = struct.unpack(self.fmt, _s)
-		
-		self.v16Temp = [HalfToFloat(self.temp[0]), 
-					HalfToFloat(self.temp[1]),
-					HalfToFloat(self.temp[2]),
-					HalfToFloat(self.temp[3]),
-					HalfToFloat(self.temp[4]),
-					HalfToFloat(self.temp[5]),
-					HalfToFloat(self.temp[7]),
-					HalfToFloat(self.temp[8]),
-					HalfToFloat(self.temp[9]),
-					HalfToFloat(self.temp[10]),
-					HalfToFloat(self.temp[11]),
-					HalfToFloat(self.temp[12])]
-					
-		self.v16Temp2 = struct.pack('12I',self.v16Temp[0], 
-									self.v16Temp[1], 
-									self.v16Temp[2], 
-									self.v16Temp[3],
-									self.v16Temp[4], 
-									self.v16Temp[5], 
-									self.v16Temp[6], 
-									self.v16Temp[7],
-									self.v16Temp[8], 
-									self.v16Temp[9], 
-									self.v16Temp[10], 
-									self.v16Temp[11])
-									
-		self.v16 = struct.unpack('12f', self.v16Temp2)
-		self.f1 = self.temp[6]
-		self.f2 = self.temp[13]
-		self.v = [self.temp[14], self.temp[15], self.temp[16]]
+def matrix_trs(translation,quaternion,scale):
+	return mathutils.Matrix.Translation(translation) @ quaternion.to_matrix().to_4x4() @ mathutils.Matrix.Scale(scale[0],4,(1,0,0)) @ mathutils.Matrix.Scale(scale[1],4,(0,1,0)) @ mathutils.Matrix.Scale(scale[2],4,(0,0,1))
+   
+def calculate_armature_matrices(local_matrices,parent_bone):
+	#In order of parent to children, calculate the armature matrices 
+	for child in parent_bone.children:
+		child.matrix = parent_bone.matrix @ local_matrices[child.name]
+
+	for child in parent_bone.children:
+		calculate_armature_matrices(local_matrices,child) 
