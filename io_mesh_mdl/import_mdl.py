@@ -22,6 +22,7 @@ import os
 import os.path
 import bpy
 import struct
+import math
 import mathutils
 from bpy_extras.io_utils import unpack_list, unpack_face_list
 from bpy_extras.image_utils import load_image
@@ -235,48 +236,50 @@ class mesh:
 			
 		file.read(1)	#pad
 
-		iMesh 		= struct.unpack('<I', file.read(4))[0]
+		iMesh 			= struct.unpack('<I', file.read(4))[0]
 		self.iMaterial 	= struct.unpack('<I', file.read(4))[0]
-		nTris 		= struct.unpack('<I', file.read(4))[0]
+		nTris 			= struct.unpack('<I', file.read(4))[0]
 		
-		struct.unpack('<I', file.read(4))[0] #unknown
+		unknown = struct.unpack('<I', file.read(4))[0] #unknown
+		print(unknown)
 		
 		nVerts 	= struct.unpack('<I', file.read(4))[0]
 		
 		if not animated:
-			Origin2 = matrix(file)
+			origin = float10(file)
 		
 		nMeshSplit = struct.unpack('<I', file.read(4))[0]
-		MeshSplit = []
 		nTotalTris = 0
+		
+		MeshSplit = {}
 		for i in range(nMeshSplit):
-			if animated:
-				MeshSplit.extend([mesh_split(file, animated)])
-			else:
-				MeshSplit.extend([mesh_split(file, animated)])
+			MeshSplit[i] = mesh_split(file, animated)
 			nTotalTris = nTotalTris + MeshSplit[i].nTris
 		
 		
-		#An Array of bones
+		#An Array of bones used in this mesh
 		if animated:
-			BoneID = []
+			self.BoneID = {}
 			nCount = struct.unpack('<I', file.read(4))[0]
+			print(nCount)
 			for j in range(nCount):
 				nCount2 = struct.unpack('<I', file.read(4))[0]
+				print(nCount2)
 				for i in range(nCount2):
-					BoneID = [struct.unpack('<I', file.read(4))[0]]
+					self.BoneID[i] = struct.unpack('<I', file.read(4))[0]
+					print(self.BoneID[i])
 
 		
 		#XYZ, Unk, UV
-		vert_1 = []
+		self.vert_1 = []
 		vert_indice = []
 		for i in range(nVerts):
 			if animated:
-				vert_1.extend([avect16_1(file)]) #An Array
+				self.vert_1.extend([avect16_1(file)]) #An Array
 			else:
-				vert_1.extend([vect16_1(file)])
+				self.vert_1.extend([vect16_1(file)])
 			
-			vert_indice.append([vert_1[i].v[0], vert_1[i].v[1], vert_1[i].v[2]]) #An Index of xyz
+			vert_indice.append([self.vert_1[i].v[0], self.vert_1[i].v[1], self.vert_1[i].v[2]]) #An Index of xyz
 
 			
 		vert_2 = []
@@ -302,7 +305,7 @@ class mesh:
 			face_indice.append([face[i].v1, face[i].v2, face[i].v3])
 			
 			
-		print('---Dynamic Cloth Stuff---')
+		#print('---Dynamic Cloth Stuff---')
 		#Dynamic Clothing Meshes go here. And are not supported at the moment...
 		nCloth = struct.unpack('<I', file.read(4))[0]
 		for i in range(nCloth):
@@ -348,17 +351,17 @@ class mesh:
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0]])
-				print('Debug 1:', vDebug[i])				
+				#print('Debug 1:', vDebug[i])				
 			vDebug = []
 			for i in range(nCVerts):
 				vDebug.append([struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0], 
 									struct.unpack('<f', file.read(4))[0]])
-				print('Debug 2:', vDebug[i])				
+				#print('Debug 2:', vDebug[i])				
 			for i in range(nCVerts):
 				vDebug = struct.unpack('<f', file.read(4))[0]
-				print('Debug 3:', vDebug)				
+				#print('Debug 3:', vDebug)				
 			fCloth = []
 			for i in range(nCTris):
 				#Mesh Faces
@@ -388,22 +391,17 @@ class mesh:
 			else:
 				for i in range(nCVerts - nCloth5):
 					file.read(4*2)
-		print('--End of Dynamic Cloth Stuff--')
+		#print('--End of Dynamic Cloth Stuff--')
 		
 		#Build the Mesh from lists
-		if animated:
-			self.mesh = bpy.data.meshes.new("AnimatedMesh")
-			self.mesh.from_pydata(vert_indice, [], face_indice)
-			self.mesh.vertices.foreach_set('normal', vert_2_table)
-			uv_layer = self.mesh.uv_layers.new(name="AnimatedMesh")
-		else:
-			self.mesh = bpy.data.meshes.new(self.Name)
-			self.mesh.from_pydata(vert_indice, [], face_indice)
-			self.mesh.vertices.foreach_set('normal', vert_2_table)
-			uv_layer = self.mesh.uv_layers.new(name=self.Name)
+		self.mesh = bpy.data.meshes.new(self.Name)
+		self.mesh.from_pydata(vert_indice, [], face_indice)
+		self.mesh.vertices.foreach_set('normal', vert_2_table)
+		uv_layer = self.mesh.uv_layers.new(name=self.Name)
 
+		#Build UV Map
 		for loop in self.mesh.loops:
-			uv_layer.data[loop.index].uv = (vert_1[loop.vertex_index].v[4],-vert_1[loop.vertex_index].v[5]) #Flip uv on y axis. Maps correctly but now it's not normalized?
+			uv_layer.data[loop.index].uv = (self.vert_1[loop.vertex_index].v[4],-self.vert_1[loop.vertex_index].v[5]) #Flip uv on y axis. Maps correctly but now it's not normalized?
 
 		
 ##################
@@ -420,51 +418,58 @@ def read(file, context, op):
 
 	##HEADER##
 	FNVHash = struct.unpack('<I', file.read(4))[0]
-	print('\nFNVHash:', FNVHash)
 	file.read(8) 	#padding
 	
-	Skeleton = BuildSkeleton(file)
+	armature = BuildSkeleton(file) #Read in the skeleton
 	
-	Origin = matrix(file) #Same as in header
+	origin = float10(file) #Same as in header
 	
-	nMaterials = struct.unpack('<I', file.read(4))[0]
-	nMeshes = struct.unpack('<I', file.read(4))[0]
-	nAnimatedMeshes = struct.unpack('<I', file.read(4))[0]
+	#Counts of different mesh types
+	nMaterials 			= struct.unpack('<I', file.read(4))[0]
+	nStatic 			= struct.unpack('<I', file.read(4))[0]
+	nSkeletal		 	= struct.unpack('<I', file.read(4))[0]
+	nPlanes 			= struct.unpack('<I', file.read(4))[0]
+	nUnknownMeshType 	= struct.unpack('<I', file.read(4))[0] #Haven't seen this used yet, but I assume it's some mesh type
+	nUnknownMeshType 	= struct.unpack('<I', file.read(4))[0] #Mostly buildings use this. Probably collision
 	
-	if nAnimatedMeshes > 0:
+	if nSkeletal > 0:
 		Animated = True
 	else:
 		Animated = False
 	
-	nPlanes = struct.unpack('<I', file.read(4))[0]
-	unk1 = struct.unpack('<I', file.read(4))[0] #Haven't seen this used yet
-	nWTF = struct.unpack('<I', file.read(4))[0] #Mostly buildings use this. Probably collision
-		
 	file.read(1)	#pad
-	
-	#I'm not sure what these are for. They don't look like dummies or points.
-	node(file)
+	node(file) #I'm not sure what these are for. They don't look like dummies or points.
 	
 	##MATERIAL##
-	print('--Texture Stuff--')
-	Material = []
+	Material = {}
 	for i in range(nMaterials):
-		Material.extend([material(file)])
-
+		Material[i] = material(file)
+	
 	##MESH##
-	print('--Mesh Stuff--')
-	Mesh = []
-	for i in range(nMeshes+nAnimatedMeshes):
-		#print('Mesh:', i)
-		Mesh.extend([mesh(file, Animated)])
-		Mesh[i].mesh.update()
-		Mesh[i].mesh.validate()
+	for i in range(nStatic+nSkeletal):
+		submesh = mesh(file, Animated)
+		submesh.mesh.update()
+		submesh.mesh.validate()
+
+		submesh.mesh.materials.append(Material[submesh.iMaterial].material)
+		nobj = bpy.data.objects.new(submesh.Name, submesh.mesh)
 		
-		print('Material:', Mesh[i].iMaterial)
-		Mesh[i].mesh.materials.append(Material[Mesh[i].iMaterial].material)
-		
-		nobj = bpy.data.objects.new(Mesh[i].Name, Mesh[i].mesh)
+		if Animated:
+			nobj.modifiers.new(type='ARMATURE', name="Armature").object = armature
+			for i in submesh.BoneID:
+				name = armature.data.bones[submesh.BoneID[i]].name
+				nobj.vertex_groups.new(name=name)
+
+			for v in submesh.mesh.vertices:
+				for i in range(len(submesh.vert_1[v.index].bones)):
+					vbone = submesh.vert_1[v.index].bones[i]
+					vweight = submesh.vert_1[v.index].weights[i]
+					name = armature.data.bones[submesh.BoneID[vbone]].name
+					if vweight > 0:
+						nobj.vertex_groups[name].add([v.index], vweight/255, "REPLACE")
+				
 		scn.objects.link(nobj)
+		bpy.context.view_layer.update()
 
 ##################
 ## Import Stuff ##
@@ -501,6 +506,8 @@ def BuildSkeleton(file):
 		Name = {}
 		Parent = {}
 		local_matrices = {}
+		
+		MAT_CONVERT_BONE = mathutils.Matrix.Rotation(math.pi / 2.0, 4, 'X') #Change World Rotation
 		
 		armdata = bpy.data.armatures.new('Skeleton')
 		armature = bpy.data.objects.new('Armature', armdata)
@@ -544,13 +551,12 @@ def BuildSkeleton(file):
 						struct.unpack('<f', file.read(4))[0],  #Matrix[8]
 						struct.unpack('<f', file.read(4))[0],  #Matrix[9]
 						struct.unpack('<f', file.read(4))[0]]  #Matrix[10]
-		
-			print('Parent:'+str(Parent[i])+',Bone:'+str(i)+','+str((Matrix[0],Matrix[1],Matrix[2],Matrix[3],Matrix[4],Matrix[5],Matrix[6],Matrix[7],Matrix[8],Matrix[9])))
 			
 			#helpers
 			test_vector = mathutils.Vector((Matrix[4],Matrix[5],Matrix[6]))
 			test_quaternion = mathutils.Quaternion((Matrix[3],Matrix[0],Matrix[1],Matrix[2]))
 			test_scale = mathutils.Vector((Matrix[7],Matrix[8],Matrix[9]))
+			
 			local_matrices[bone.name] = matrix_trs(test_vector,test_quaternion,test_scale)
 			
 
@@ -558,8 +564,10 @@ def BuildSkeleton(file):
 		root_bone = armature.data.edit_bones[0]
 		root_bone.matrix = local_matrices[root_bone.name]
 		calculate_armature_matrices(local_matrices,root_bone)
+		bpy.ops.object.mode_set(mode='OBJECT')
 		bpy.context.view_layer.update()
-
+		return armature
+		
 def node(file):
 	nNodes = struct.unpack('<I', file.read(4))[0]
 	Strings = []
@@ -602,10 +610,12 @@ def read_string(file):
     #remove the null character from the string
     return str(s, "utf-8", "replace")
 
-def matrix(file):
+def float10(file):
 	fmt = 'f' * 10
 	_s = file.read(struct.calcsize(fmt))
-	matrix = struct.unpack(fmt, _s)	
+	float10 = struct.unpack(fmt, _s)
+	return float10
+	
 def vect(file):
 	fmt = '7f'
 	_s = file.read(struct.calcsize(fmt))
@@ -635,40 +645,40 @@ class vect16_1:
 		self.v = struct.unpack('6f', self.vp)	
 class avect16_1:
 	fmt = '4h8B2h'
-	#xyz
-	#?
-	#Bones
-	#Weights
-	#uv
 	
 	def __init__(self, file):
 		_s = file.read(struct.calcsize(self.fmt))
-		self.v16 = struct.unpack(self.fmt, _s)
+		v16 = struct.unpack(self.fmt, _s)
+		#print(v16)
+		#v16[0] X
+		#v16[1] Y
+		#v16[2] Z
+		#v16[3] ??
+		#v16[4] Bone?
+		#v16[5] Bone?
+		#v16[6] Bone?
+		#v16[7] Bone?
+		#v16[8] Weight?
+		#v16[9] Weight?
+		#v16[10] Weight?
+		#v16[11] Weight?
+		#v16[12] U
+		#v16[13] V
 		
 		#Convert 16bit floats
-		self.vu = [HalfToFloat(self.v16[0]),
-					HalfToFloat(self.v16[1]),
-					HalfToFloat(self.v16[2]),
-					HalfToFloat(self.v16[3]),
-					HalfToFloat(self.v16[12]),
-					HalfToFloat(self.v16[13])]
-		
-		self.vp = struct.pack('6I', self.vu[0], 
-									self.vu[1], 
-									self.vu[2], 
-									self.vu[3], 
-									self.vu[4], 
-									self.vu[5])
+		vu = [HalfToFloat(v16[0]),HalfToFloat(v16[1]),HalfToFloat(v16[2]),HalfToFloat(v16[3]),HalfToFloat(v16[12]),HalfToFloat(v16[13])]
+		vp = struct.pack('6I', vu[0],vu[1],vu[2],vu[3],vu[4],vu[5])
 									
-		self.v = struct.unpack('6f', self.vp)
-		self.bones = [self.v16[4], self.v16[5], self.v16[6], self.v16[7]]
-		self.weights = [self.v16[8], self.v16[9], self.v16[10], self.v16[11]]
+		self.v = struct.unpack('6f', vp)
+		self.bones = [v16[4], v16[5], v16[6], v16[7]]
+		self.weights = [v16[8],v16[9],v16[10],v16[11]]
 class vect16_2:
 	fmt = '8h'
 	
 	def __init__(self, file):
 		_s = file.read(struct.calcsize(self.fmt))
 		self.v16 = struct.unpack(self.fmt, _s)
+		#print(self.v16)
 		
 		self.vu = [HalfToFloat(self.v16[0]), 
 					HalfToFloat(self.v16[1]),
