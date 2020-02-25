@@ -24,7 +24,7 @@ import bpy
 import struct
 import math
 import mathutils
-from bpy_extras.io_utils import unpack_list, unpack_face_list
+from bpy_extras.io_utils import unpack_list, unpack_face_list, axis_conversion
 from bpy_extras.image_utils import load_image
 
 ##################
@@ -561,12 +561,34 @@ def BuildSkeleton(file):
 			
 
 		#assumes only one root bone
-		root_bone = armature.data.edit_bones[0]
-		root_bone.matrix = local_matrices[root_bone.name]
-		calculate_armature_matrices(local_matrices,root_bone)
-		bpy.ops.object.mode_set(mode='OBJECT')
-		bpy.context.view_layer.update()
+		if Bones > 0:
+			root_bone = armature.data.edit_bones[0]
+			root_bone.matrix = local_matrices[root_bone.name]
+			calculate_armature_matrices(local_matrices,root_bone)
+			bpy.ops.object.mode_set(mode='OBJECT')
+			bpy.context.view_layer.update()
 		return armature
+
+def find_correction_matrix(parent_correction_inv=None):
+	# To cancel out unwanted rotation/scale on nodes.
+	global_matrix_inv = global_matrix.inverted()
+	# For transforming mesh normals.
+	global_matrix_inv_transposed = global_matrix_inv.transposed()
+
+	# Compute bone correction matrix
+	bone_correction_matrix = None  # None means no correction/identity
+	bone_correction_matrix = axis_conversion(from_forward='X',
+												 from_up='Y',
+												 to_forward=secondary_bone_axis,
+												 to_up=primary_bone_axis,
+												 ).to_4x4()
+
+	bone_correction_matrix = global_matrix_inv @ (bone_correction_matrix if bone_correction_matrix else Matrix())
+
+	# process children
+	bone_correction_matrix_inv = bone_correction_matrix.inverted_safe() if bone_correction_matrix else None
+	for child in self.children:
+		child.find_correction_matrix(bone_correction_matrix_inv)
 		
 def node(file):
 	nNodes = struct.unpack('<I', file.read(4))[0]
@@ -698,9 +720,23 @@ def matrix_trs(translation,quaternion,scale):
 	return mathutils.Matrix.Translation(translation) @ quaternion.to_matrix().to_4x4() @ mathutils.Matrix.Scale(scale[0],4,(1,0,0)) @ mathutils.Matrix.Scale(scale[1],4,(0,1,0)) @ mathutils.Matrix.Scale(scale[2],4,(0,0,1))
    
 def calculate_armature_matrices(local_matrices,parent_bone):
-	#In order of parent to children, calculate the armature matrices 
+	#In order of parent to children, calculate the armature matrices
+	
+	# To cancel out unwanted rotation/scale on nodes.
+	global_matrix_inv = Matrix.inverted()
+	# For transforming mesh normals.
+	global_matrix_inv_transposed = global_matrix_inv.transposed()
+	
+	# Compute bone correction matrix
+	bone_correction_matrix = None  # None means no correction/identity
+	bone_correction_matrix = axis_conversion(from_forward='X', from_up='Y',to_forward='X',to_up='Y',).to_4x4()
+	bone_correction_matrix = global_matrix_inv @ (bone_correction_matrix if bone_correction_matrix else Matrix())
+
+	# process children
+	bone_correction_matrix_inv = bone_correction_matrix.inverted_safe() if bone_correction_matrix else None
+	
 	for child in parent_bone.children:
-		child.matrix = parent_bone.matrix @ local_matrices[child.name]
+		child.matrix = parent_bone.matrix @ local_matrices[child.name] @ bone_correction_matrix_inv
 
 	for child in parent_bone.children:
 		calculate_armature_matrices(local_matrices,child) 
