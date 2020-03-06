@@ -38,7 +38,6 @@ import bpy
 from bpy.props import StringProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 
-
 class ImportMDL(bpy.types.Operator, ImportHelper):
 	'''Load MDL mesh data'''
 	bl_idname = "import_mesh.mdl"
@@ -54,7 +53,7 @@ class ImportMDL(bpy.types.Operator, ImportHelper):
 								type=bpy.types.OperatorFileListElement)
 
 	directory = StringProperty(	subtype='DIR_PATH')
-
+	
 	def execute(self, context):
 		from . import import_mdl
 		print('Importing file', self.filepath)

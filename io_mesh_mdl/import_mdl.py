@@ -24,7 +24,7 @@ import bpy
 import struct
 import math
 import mathutils
-from bpy_extras.io_utils import unpack_list, unpack_face_list, axis_conversion
+from bpy_extras.io_utils import unpack_list, unpack_face_list, axis_conversion,orientation_helper
 from bpy_extras.image_utils import load_image
 
 ##################
@@ -209,16 +209,18 @@ class material:
 			
 class mesh_split:
 	def __init__(self, file, animated):
-		struct.unpack('<I', file.read(4))[0]
+		unknown = file.read(4)
+		print('Submesh Unknown: '+str(unknown))
+		
 		file.read(1)	#pad
 		
 		self.nTris = struct.unpack('<I', file.read(4))[0] # passed outside class
 		
 		pStart = struct.unpack('<I', file.read(4))[0] #offset pointer
-		
 		Origin = struct.unpack('<6f', file.read(24))[0]
 		if animated:
-			struct.unpack('<I', file.read(4))[0]
+			unknown = file.read(4)
+			print('Animated Submesh Unknown: '+str(unknown))
 					
 class triangle:
 	def __init__(self, file):
@@ -400,24 +402,97 @@ class mesh:
 		uv_layer = self.mesh.uv_layers.new(name=self.Name)
 
 		#Build UV Map
+		#This needs coordinate conversion done on it.
 		for loop in self.mesh.loops:
 			uv_layer.data[loop.index].uv = (self.vert_1[loop.vertex_index].v[4],-self.vert_1[loop.vertex_index].v[5]) #Flip uv on y axis. Maps correctly but now it's not normalized?
 
+def BuildSkeleton(file):
+
+		DummyName = {}
+		DummyID = {}
+		Name = {}
+		Parent = {}
+		local_matrices = {}
+		
+		#Create the armature
+		armdata = bpy.data.armatures.new('Skeleton')
+		armature = bpy.data.objects.new('Armature', armdata)
+		bpy.context.collection.objects.link(armature)
+		
+		#Make sure only armature is selected and in edit mode
+		for i in bpy.context.collection.objects: i.select_set(False) #deselect all objects
+		armature.select_set(True)
+		bpy.context.view_layer.objects.active = armature
+		bpy.ops.object.mode_set(mode='EDIT')
+
+		dummies = struct.unpack('B', file.read(1))[0]
+		for i in range(dummies):
+			DummyName[i] = struct.unpack('<I', file.read(4))[0]
+			DummyID[i] = struct.unpack('<i', file.read(4))[0]
+			
+		hierarchy = struct.unpack('<I', file.read(4))[0]
+		for i in range(hierarchy):
+			Name[i] = struct.unpack('<I', file.read(4))[0]
+			Parent[i] = struct.unpack('<i', file.read(4))[0]
+		
+		
+		Bones = struct.unpack('<I', file.read(4))[0]
+		for i in range(Bones):
+			bone = armature.data.edit_bones.new(str(Name[i]))
+			bone.length = 0.05
+			
+			#parent bone
+			if Parent[i] != -1:
+				bone.parent = armature.data.edit_bones[Parent[i]]
+			
+			#Pull data from file
+			Matrix = [	struct.unpack('<f', file.read(4))[0],  #Matrix[0] X?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[1] Y?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[2] Z?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[3] scale? Maybe W?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[4] X?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[5] Y?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[6] Z?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[7] scale? Maybe W?
+						struct.unpack('<f', file.read(4))[0],  #Matrix[8]
+						struct.unpack('<f', file.read(4))[0],  #Matrix[9]
+						struct.unpack('<f', file.read(4))[0]]  #Matrix[10]
+			
+			#helpers
+			pos = mathutils.Vector((Matrix[4],Matrix[5],Matrix[6]))
+			rot = mathutils.Quaternion((Matrix[3],Matrix[0],Matrix[1],Matrix[2]))
+			scale = mathutils.Vector((Matrix[7],Matrix[8],Matrix[9]))
+			
+			#Keep the matrices, but don't apply them. We need to change the axis first.
+			local_matrices[bone.name] = calculate_armature_matrices(pos,rot,scale)
+
+		#assumes only one root bone
+		if Bones > 0:
+			root_bone = armature.data.edit_bones[0]
+			global_matrix = mathutils.Matrix() #axis_conversion(from_forward='Y', from_up='Z', to_forward='-X', to_up='Z').to_4x4()
+			root_bone.matrix = local_matrices[root_bone.name] @ global_matrix
+			apply_armature_matrices(root_bone,local_matrices,global_matrix)
+			bpy.ops.object.mode_set(mode='OBJECT')
+			bpy.context.view_layer.update()
+		return armature
 		
 ##################
 ## Read in File ##
 ##################
 
 def read(file, context, op):
-
+	
+	global_matrix = axis_conversion(from_forward='-Z',from_up='Y').to_4x4()
 	#Create the Scene Root
 	scn = bpy.context.collection
 	
 	for o in scn.objects:
 		o.select_set(state=False)
+		o.matrix_world = global_matrix
 
 	##HEADER##
 	FNVHash = struct.unpack('<I', file.read(4))[0]
+	print(FNVHash)
 	file.read(8) 	#padding
 	
 	armature = BuildSkeleton(file) #Read in the skeleton
@@ -470,6 +545,7 @@ def read(file, context, op):
 				
 		scn.objects.link(nobj)
 		bpy.context.view_layer.update()
+		
 
 ##################
 ## Import Stuff ##
@@ -499,102 +575,12 @@ class MDLImporter(bpy.types.Operator):
 ## UTILS ##
 ###########
 
-def BuildSkeleton(file):
-
-		DummyName = {}
-		DummyID = {}
-		Name = {}
-		Parent = {}
-		local_matrices = {}
-		
-		MAT_CONVERT_BONE = mathutils.Matrix.Rotation(math.pi / 2.0, 4, 'X') #Change World Rotation
-		
-		armdata = bpy.data.armatures.new('Skeleton')
-		armature = bpy.data.objects.new('Armature', armdata)
-		bpy.context.collection.objects.link(armature)
-		
-		for i in bpy.context.collection.objects: i.select_set(False) #deselect all objects
-		armature.select_set(True)
-		bpy.context.view_layer.objects.active = armature
-		bpy.ops.object.mode_set(mode='EDIT')
-
-		dummies = struct.unpack('B', file.read(1))[0]
-		for i in range(dummies):
-			DummyName[i] = struct.unpack('<I', file.read(4))[0]
-			DummyID[i] = struct.unpack('<i', file.read(4))[0]
-			
-		hierarchy = struct.unpack('<I', file.read(4))[0]
-		for i in range(hierarchy):
-			Name[i] = struct.unpack('<I', file.read(4))[0]
-			Parent[i] = struct.unpack('<i', file.read(4))[0]
-		
-		
-		Bones = struct.unpack('<I', file.read(4))[0]
-		for i in range(Bones):
-			#create bone
-			bone = armature.data.edit_bones.new(str(Name[i]))
-			bone.length = 0.05
-			
-			#parent bone
-			if Parent[i] != -1:
-				bone.parent = armature.data.edit_bones[Parent[i]]
-			
-			#Pull data from file
-			Matrix = [	struct.unpack('<f', file.read(4))[0],  #Matrix[0] X?
-						struct.unpack('<f', file.read(4))[0],  #Matrix[1] Y?
-						struct.unpack('<f', file.read(4))[0],  #Matrix[2] Z?
-						struct.unpack('<f', file.read(4))[0],  #Matrix[3] scale? Maybe W?
-						struct.unpack('<f', file.read(4))[0],  #Matrix[4] X?
-						struct.unpack('<f', file.read(4))[0],  #Matrix[5] Y?
-						struct.unpack('<f', file.read(4))[0],  #Matrix[6] Z?
-						struct.unpack('<f', file.read(4))[0],  #Matrix[7] scale? Maybe W?
-						struct.unpack('<f', file.read(4))[0],  #Matrix[8]
-						struct.unpack('<f', file.read(4))[0],  #Matrix[9]
-						struct.unpack('<f', file.read(4))[0]]  #Matrix[10]
-			
-			#helpers
-			test_vector = mathutils.Vector((Matrix[4],Matrix[5],Matrix[6]))
-			test_quaternion = mathutils.Quaternion((Matrix[3],Matrix[0],Matrix[1],Matrix[2]))
-			test_scale = mathutils.Vector((Matrix[7],Matrix[8],Matrix[9]))
-			
-			local_matrices[bone.name] = matrix_trs(test_vector,test_quaternion,test_scale)
-			
-
-		#assumes only one root bone
-		if Bones > 0:
-			root_bone = armature.data.edit_bones[0]
-			root_bone.matrix = local_matrices[root_bone.name]
-			calculate_armature_matrices(local_matrices,root_bone)
-			bpy.ops.object.mode_set(mode='OBJECT')
-			bpy.context.view_layer.update()
-		return armature
-
-def find_correction_matrix(parent_correction_inv=None):
-	# To cancel out unwanted rotation/scale on nodes.
-	global_matrix_inv = global_matrix.inverted()
-	# For transforming mesh normals.
-	global_matrix_inv_transposed = global_matrix_inv.transposed()
-
-	# Compute bone correction matrix
-	bone_correction_matrix = None  # None means no correction/identity
-	bone_correction_matrix = axis_conversion(from_forward='X',
-												 from_up='Y',
-												 to_forward=secondary_bone_axis,
-												 to_up=primary_bone_axis,
-												 ).to_4x4()
-
-	bone_correction_matrix = global_matrix_inv @ (bone_correction_matrix if bone_correction_matrix else Matrix())
-
-	# process children
-	bone_correction_matrix_inv = bone_correction_matrix.inverted_safe() if bone_correction_matrix else None
-	for child in self.children:
-		child.find_correction_matrix(bone_correction_matrix_inv)
-		
 def node(file):
 	nNodes = struct.unpack('<I', file.read(4))[0]
-	Strings = []
+	Strings = {}
 	for i in range(nNodes):
-		Strings.extend([read_string(file)])
+		Strings[i] = read_string(file)
+	return Strings
 
 def HalfToFloat(h):
     s = int((h >> 15) & 0x00000001)    # sign
@@ -637,11 +623,6 @@ def float10(file):
 	_s = file.read(struct.calcsize(fmt))
 	float10 = struct.unpack(fmt, _s)
 	return float10
-	
-def vect(file):
-	fmt = '7f'
-	_s = file.read(struct.calcsize(fmt))
-	v = struct.unpack(fmt, _s)
 	
 #This is a HACK..
 class vect16_1:
@@ -716,27 +697,14 @@ class vect16_2:
 									self.vu[3])
 		self.v = struct.unpack('4f', self.vp)
 	
-def matrix_trs(translation,quaternion,scale):
+def calculate_armature_matrices(translation,quaternion,scale):
 	return mathutils.Matrix.Translation(translation) @ quaternion.to_matrix().to_4x4() @ mathutils.Matrix.Scale(scale[0],4,(1,0,0)) @ mathutils.Matrix.Scale(scale[1],4,(0,1,0)) @ mathutils.Matrix.Scale(scale[2],4,(0,0,1))
    
-def calculate_armature_matrices(local_matrices,parent_bone):
-	#In order of parent to children, calculate the armature matrices
-	
-	# To cancel out unwanted rotation/scale on nodes.
-	global_matrix_inv = Matrix.inverted()
-	# For transforming mesh normals.
-	global_matrix_inv_transposed = global_matrix_inv.transposed()
-	
-	# Compute bone correction matrix
-	bone_correction_matrix = None  # None means no correction/identity
-	bone_correction_matrix = axis_conversion(from_forward='X', from_up='Y',to_forward='X',to_up='Y',).to_4x4()
-	bone_correction_matrix = global_matrix_inv @ (bone_correction_matrix if bone_correction_matrix else Matrix())
-
+def apply_armature_matrices(parent_bone,local_matrices,global_conversion=None):
 	# process children
-	bone_correction_matrix_inv = bone_correction_matrix.inverted_safe() if bone_correction_matrix else None
-	
 	for child in parent_bone.children:
-		child.matrix = parent_bone.matrix @ local_matrices[child.name] @ bone_correction_matrix_inv
+		child.matrix = parent_bone.matrix @ global_conversion.inverted() @ local_matrices[child.name] @ global_conversion
+		apply_armature_matrices(child,local_matrices,global_conversion)
 
-	for child in parent_bone.children:
-		calculate_armature_matrices(local_matrices,child) 
+	#for child in parent_bone.children:
+		#apply_armature_matrices(child,local_matrices,global_conversion)

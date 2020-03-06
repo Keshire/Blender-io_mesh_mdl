@@ -28,7 +28,6 @@ bl_info = {
 #includes
 import os
 import bpy
-import lzma
 import struct
 
 from bpy.props import (
@@ -42,6 +41,7 @@ from bpy_extras.io_utils import (
     ImportHelper,
     ExportHelper,
 )
+from io_helper_mdl.lzo_spec import (Lzo_Codec)
 
 class ImportBIN(bpy.types.Operator, ImportHelper):
 	'''Load MDL mesh data'''
@@ -83,77 +83,66 @@ def read_string(file):
 	#remove the null character from the string
 	return str(s, "utf-8", "replace")
 
-def float10(file):
-	fmt = 'f' * 10
-	_s = file.read(struct.calcsize(fmt))
-	float10 = struct.unpack(fmt, _s)
-	return float10
-
 def import_bin(file, context, self):
 	#Create the Scene Root
 	scn = bpy.context.collection
 	for o in scn.objects: o.select_set(state=False)
-	sName = read_string(file)
-	print(sName)
-	bSkeleton = struct.unpack('<?', file.read(1))[0]
-	aOrigin = float10(file)
+	name = read_string(file)
+	isSkeletal = struct.unpack('<?', file.read(1))[0]
+	matrix = helper_model_origin(file)
 	HPNT_Count = struct.unpack('<H', file.read(2))[0]
 	HDMY_Count = struct.unpack('<H', file.read(2))[0]
 	
-	HLPR_Uncompressed = struct.unpack('<I', file.read(4))[0]
-	Pad = file.read(4)
+	HLPR_Size = struct.unpack('<I', file.read(4))[0]
+	Pad = file.read(2)
 	
-	HPNT_CompressedSize = struct.unpack('<H', file.read(2))[0]
-	print(HPNT_CompressedSize)
-	HPNT_Chunk = file.read(HPNT_CompressedSize)
-	HPNT = lzma.decompress(HPNT_Chunk)
-	print(HPNT)
-	'''
-	HPNT_Origin = {}
-	HPNT = {}
-	for i in range(HPNT_Count):
-		HPNT_Origin[i] = helper_point_origin(file)
-		HPNT[i] = struct.unpack('<I', file.read(4))[0]
-		print(str(HPNT_Origin[i])+str(HPNT[i]))
-	'''
+	if HPNT_Count > 0:
+		HPNT = {}
+		size = struct.unpack('<H', file.read(2))[0]
+		print('HPNT size:'+str(size))
+		if size > 0:
+			src = file.read(size)
+			dst = bytearray((4*4)*HPNT_Count)
+			result = Lzo_Codec.Lzo1x_Decompress(src, 0, size+5, dst, 0)
+			print(result)
+			print(dst)
 		
-	#HDMY_CompressedSize = struct.unpack('<H', file.read(2))[0]
-	#print(HDMY_CompressedSize)
-	#HDMY_Chunk = file.read(HDMY_CompressedSize)
-	'''
-	HDMY_Origin = {}
-	HDMY = {}
-	for i in range(HDMY_Count):
-		HDMY_Origin[i] = helper_dummy_origin(file)
-		HDMY[i] = struct.unpack('<I', file.read(4))[0]
-		print(str(HDMY_Origin[i])+str(HDMY[i]))
-	'''
-	
-	#HLPR_Compressed = struct.unpack('<H', file.read(2))[0]
-	#print(HLPR_Compressed)
-	
-	'''
-	HPNT_IndexSize = struct.unpack('<H', file.read(2))[0]
-	
-	HPNT_Index = {}
-	for i in range(HPNT_IndexSize):
-		HPNT_Index[i] = struct.unpack('<c', file.read(1))[0]
-	print(HPNT_Index)
-	
-	HDMY_Index = {}
-	for i in range(HLPR_Uncompressed-HPNT_IndexSize):
-		HDMY_Index[i] = struct.unpack('<c', file.read(1))[0]
-	print(HDMY_Index)
-	'''
-	
+		for i in range(HPNT_Count):
+			HPNT[i] = helper_point_origin(file)
+				
+	if HDMY_Count > 0:
+		HDMY = {}
+		size = struct.unpack('<H', file.read(2))[0]
+		print('HDMY size:'+str(size))
+		if size > 0:
+			src = file.read(size+3)
+			dst = bytearray((13*4)*HDMY_Count)
+			result = Lzo_Codec.Lzo1x_Decompress(src, 0, size+3, dst, 0)
+			print(str(result)+','+str(len(dst)))
+			print(dst)
+
+		for i in range(HDMY_Count):
+			HDMY[i] = helper_dummy_origin(file)
+
 def helper_point_origin(file):
-	fmt = 'f' * 4
+	fmt = '<5i'
 	_s = file.read(struct.calcsize(fmt))
-	floats = struct.unpack(fmt, _s)
-	return floats
+	point = struct.unpack(fmt, _s)
+	return point
 
 def helper_dummy_origin(file):
-	fmt = 'f' * 13
+	fmt = '<13i'
 	_s = file.read(struct.calcsize(fmt))
-	floats = struct.unpack(fmt, _s)
-	return floats
+	dummy = struct.unpack(fmt, _s)
+	return dummy
+	
+def helper_model_origin(file):
+	fmt = '<10f'
+	_s = file.read(struct.calcsize(fmt))
+	matrix = struct.unpack(fmt, _s)
+	return matrix
+	
+def adjust_in_out(src):
+	soffset = (src[1] << 8) + src[0];
+	print(soffset)
+	return soffset
