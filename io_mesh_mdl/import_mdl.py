@@ -484,15 +484,16 @@ def read(file, context, op):
 	
 	global_matrix = axis_conversion(from_forward='-Z',from_up='Y').to_4x4()
 	#Create the Scene Root
-	scn = bpy.context.collection
+	scn_root = bpy.context.collection
+	scn = bpy.data.collections.new('Fable3_MESH')
+	scn_root.children.link(scn)
 	
-	for o in scn.objects:
+	for o in scn_root.objects:
 		o.select_set(state=False)
 		o.matrix_world = global_matrix
 
 	##HEADER##
 	FNVHash = struct.unpack('<I', file.read(4))[0]
-	print(FNVHash)
 	file.read(8) 	#padding
 	
 	armature = BuildSkeleton(file) #Read in the skeleton
