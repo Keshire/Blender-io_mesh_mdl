@@ -17,18 +17,19 @@
 # ##### END GPL LICENSE BLOCK #####
 
 bl_info = {
-    "name": "Lionhead Fable Anniversary Binary Helpers",
+    "name": "Lionhead Fable:A Helpers",
     "author": "Jonathan Mattison (Keshire)",
     "version": (0, 0, 1),
     "blender": (2, 82, 0),
-    "location": "File > Import-Export > Lionhead Binary Helpers",
-    "description": "Import-Export Lionhead Binary Helpers",
+    "location": "File > Import-Export > Lionhead Fable:A Helpers",
+    "description": "Import-Export Lionhead Fable:A Helpers",
     "category": "Import-Export"}
 	
 #includes
 import os
 import bpy
 import struct
+import zlib
 
 from bpy.props import (
     StringProperty,
@@ -41,7 +42,6 @@ from bpy_extras.io_utils import (
     ImportHelper,
     ExportHelper,
 )
-from io_helper_mdl.lzo_spec import (Lzo_Codec)
 
 class ImportBIN(bpy.types.Operator, ImportHelper):
 	'''Load MDL mesh data'''
@@ -71,6 +71,104 @@ def unregister():
 if __name__ == "__main__":
     register()
 	
+def import_bin(file, context, self):
+	#Create the Scene Root
+	scn = bpy.context.collection
+	for o in scn.objects: o.select_set(state=False)
+	name = read_string(file);print(name)
+	isSkeletal = struct.unpack('<?', file.read(1))[0]
+	origin = helper_origin(file)
+	HPNT_Count = struct.unpack('<H', file.read(2))[0];print(HPNT_Count)
+	HDMY_Count = struct.unpack('<H', file.read(2))[0];print(HDMY_Count)
+	HLPR_Size = struct.unpack('<I', file.read(4))[0];print(HLPR_Size)
+	Pad = file.read(2)
+	
+	#Well, shit. points and dummies, sorted by crc. Strings are sorted alphabetically. Don't match...3270660459
+	if HPNT_Count > 0:
+		compressed_size = struct.unpack('<H', file.read(2))[0] #file should be unpacked
+		HPNT = {}
+		for i in range(HPNT_Count):
+			p = helper_point_origin(file)
+			HPNT[p.index] = p
+				
+	if HDMY_Count > 0:
+		compressed_size = struct.unpack('<H', file.read(2))[0] #file should be unpacked	
+		HDMY = {}
+		for i in range(HDMY_Count):
+			d = helper_dummy_origin(file)
+			HDMY[d.index] = d
+	
+	if HLPR_Size > 0:
+		compressed_size = struct.unpack('<H', file.read(2))[0] #file should be unpacked
+		
+		point_block = struct.unpack('<H', file.read(2))[0]
+		points = {}
+		for i in range(HPNT_Count):
+			name,index = read_string(file)
+			HPNT[index].name = name
+			points[i] = HPNT[index]
+			
+			p = bpy.data.objects.new('HPNT_'+points[i].name,None)
+			p.location = (points[i].x,points[i].y,points[i].z)
+			p.empty_display_size = 0.1
+			p.empty_display_type = 'PLAIN_AXES'
+			scn.objects.link(p)
+		
+		file.read(1) # end of block
+		
+		dummy_block = HLPR_Size - point_block
+		dummies = {}
+		for i in range(HDMY_Count):
+			name,index = read_string(file)
+			HDMY[index].name = name
+			dummies[i] = HDMY[index]
+			p = bpy.data.objects.new('HDMY_'+dummies[i].name,None)
+			p.matrix_local = dummies[i].matrix
+			p.empty_display_size = 10
+			p.empty_display_type = 'ARROWS'
+			scn.objects.link(p)
+		
+		file.read(1) # end of block
+	
+	#All this can be empty, may not even be read by the game.
+	file.read(4) #material
+	file.read(4) #submesh
+	file.read(4) #bone
+	file.read(4) #boneindex
+	file.read(1) #pad
+	file.read(2) #unk
+	file.read(2) #unk
+	matrix2 = helper_matrix(file)	
+
+class helper_point_origin:
+	def __init__(self,file):
+		self.name = "None"
+		self.index = struct.unpack('<I', file.read(4))[0]
+		self.x = struct.unpack('<f', file.read(4))[0]/100
+		self.y = struct.unpack('<f', file.read(4))[0]/100
+		self.z = struct.unpack('<f', file.read(4))[0]/100
+		self.hierarchy = struct.unpack('<I', file.read(4))[0]
+
+class helper_dummy_origin:
+	def __init__(self,file):
+		self.name = "None"
+		self.index = struct.unpack('<I', file.read(4))[0]
+		self.matrix = helper_matrix(file)
+		self.hierarchy = struct.unpack('<I', file.read(4))[0]
+
+def helper_matrix(file):
+	fmt = '<12f' #3x4, scale = (1,1,1) to make it 4x4 I beleive
+	_s = file.read(struct.calcsize(fmt))
+	f = struct.unpack(fmt, _s)
+	matrix = ((f[0]/100,f[1]/100,f[2]/100,1),(f[3]/100,f[4]/100,f[5]/100,1),(f[6]/100,f[7]/100,f[8]/100,1),(f[9]/100,f[10]/100,f[11]/100,1))
+	return matrix
+
+def helper_origin(file):
+	fmt = '<10f' #3x3, scale = 1
+	_s = file.read(struct.calcsize(fmt))
+	matrix = struct.unpack(fmt, _s)
+	return matrix
+	
 def read_string(file):
 	#read in the characters till we get a null character
 	s = b''
@@ -79,70 +177,7 @@ def read_string(file):
 		if c == b'\x00':
 			break
 		s += c
+	crc = (0xffffffff - zlib.crc32(s,0xffffffff))
 
 	#remove the null character from the string
-	return str(s, "utf-8", "replace")
-
-def import_bin(file, context, self):
-	#Create the Scene Root
-	scn = bpy.context.collection
-	for o in scn.objects: o.select_set(state=False)
-	name = read_string(file)
-	isSkeletal = struct.unpack('<?', file.read(1))[0]
-	matrix = helper_model_origin(file)
-	HPNT_Count = struct.unpack('<H', file.read(2))[0]
-	HDMY_Count = struct.unpack('<H', file.read(2))[0]
-	
-	HLPR_Size = struct.unpack('<I', file.read(4))[0]
-	Pad = file.read(2)
-	
-	if HPNT_Count > 0:
-		HPNT = {}
-		size = struct.unpack('<H', file.read(2))[0]
-		print('HPNT size:'+str(size))
-		if size > 0:
-			src = file.read(size)
-			dst = bytearray((4*4)*HPNT_Count)
-			result = Lzo_Codec.Lzo1x_Decompress(src, 0, size+5, dst, 0)
-			print(result)
-			print(dst)
-		
-		for i in range(HPNT_Count):
-			HPNT[i] = helper_point_origin(file)
-				
-	if HDMY_Count > 0:
-		HDMY = {}
-		size = struct.unpack('<H', file.read(2))[0]
-		print('HDMY size:'+str(size))
-		if size > 0:
-			src = file.read(size+3)
-			dst = bytearray((13*4)*HDMY_Count)
-			result = Lzo_Codec.Lzo1x_Decompress(src, 0, size+3, dst, 0)
-			print(str(result)+','+str(len(dst)))
-			print(dst)
-
-		for i in range(HDMY_Count):
-			HDMY[i] = helper_dummy_origin(file)
-
-def helper_point_origin(file):
-	fmt = '<5i'
-	_s = file.read(struct.calcsize(fmt))
-	point = struct.unpack(fmt, _s)
-	return point
-
-def helper_dummy_origin(file):
-	fmt = '<13i'
-	_s = file.read(struct.calcsize(fmt))
-	dummy = struct.unpack(fmt, _s)
-	return dummy
-	
-def helper_model_origin(file):
-	fmt = '<10f'
-	_s = file.read(struct.calcsize(fmt))
-	matrix = struct.unpack(fmt, _s)
-	return matrix
-	
-def adjust_in_out(src):
-	soffset = (src[1] << 8) + src[0];
-	print(soffset)
-	return soffset
+	return str(s, "utf-8", "replace"), crc
