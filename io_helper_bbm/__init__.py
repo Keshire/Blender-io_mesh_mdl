@@ -29,6 +29,7 @@ bl_info = {
 import os
 import bpy
 import struct
+import mathutils
 import zlib
 from bpy_extras.io_utils import (ImportHelper,ExportHelper)
 from bpy.props import (
@@ -112,7 +113,7 @@ def import_bbm(file, context, self):
 	HPNT_Count = struct.unpack('<H', file.read(2))[0]
 	HDMY_Count = struct.unpack('<H', file.read(2))[0]
 	HLPR_Size = struct.unpack('<I', file.read(4))[0]
-	Pad = file.read(2)
+	file.read(2) # Padding
 	
 	#Well, shit. points and dummies, sorted by crc. Strings are sorted alphabetically. Don't match...3270660459
 	if HPNT_Count > 0:
@@ -169,14 +170,78 @@ def import_bbm(file, context, self):
 	file.read(1) #pad
 	file.read(2) #unk
 	file.read(2) #unk
-	matrix = read_helper_matrix(file)
-	scn['export_matrix'] = matrix
+	scn['export_matrix'] = mathutils.Matrix(read_helper_matrix(file))
 
 #Main Export function#	
 def export_bbm(file, context, self):
-	#Get the helpers
-	HLPR = bpy.data.collections.get("HLPR")
-	file.write(write_string(HLPR['export_name']))
+	#Get the Collection Meta Data
+	col = bpy.data.collections.get("HLPR")
+	
+	name = col['export_name']
+	isSkeletal = col['export_isSkeletal']
+	origin = col['export_origin']
+	matrix = col['export_matrix']
+	
+	file.write(write_string(name))
+	file.write(struct.pack('<?',isSkeletal))
+	file.write(write_helper_origin(origin))
+	
+	HPNT = [obj for obj in bpy.context.scene.objects if obj.name.startswith("HPNT_")]
+	HPNT_Count = len(HPNT)
+	HDMY = [obj for obj in bpy.context.scene.objects if obj.name.startswith("HDMY_")]
+	HDMY_Count = len(HDMY)
+	
+	file.write(struct.pack('<H', HPNT_Count))
+	file.write(struct.pack('<H', HDMY_Count))
+	
+	#Strings are sorted alphabetically
+	HPNT = sorted(HPNT, key=lambda point: point.name[5:])
+	HDMY = sorted(HDMY, key=lambda dummy: dummy.name[5:])
+	HLPR = b''
+	#build helper block to get size
+	for i in range(HPNT_Count):
+		HLPR += write_string(HPNT[i].name[5:])
+	HLPR += b'\x00' #padding
+	
+	point_block = len(HLPR)+2 #needs to take into account itself.
+	HLPR = struct.pack('<H',point_block)+HLPR #self and point block
+
+	for i in range(HDMY_Count):
+		HLPR += write_string(HDMY[i].name[5:])
+	HLPR += b'\x00' #padding
+	
+	HLPR_Size = len(HLPR) #Total size
+	file.write(struct.pack('<I', HLPR_Size))
+	file.write(b'\x00\x00')#Pad
+	
+	compressed_size = b'\x00\x00' #Unpacked 0000
+	file.write(compressed_size)
+	#HPNTs sorted by crc
+	HPNT = sorted(HPNT, key=lambda point: (0xffffffff - zlib.crc32(point.name[5:].encode('utf-8'),0xffffffff)))
+	for i in range(HPNT_Count):
+		file.write(write_helper_point_origin(HPNT[i]))
+
+	file.write(compressed_size)
+	#HDMYs sorted by crc
+	HDMY = sorted(HDMY, key=lambda dummy: (0xffffffff - zlib.crc32(dummy.name[5:].encode('utf-8'),0xffffffff)))
+	for i in range(HDMY_Count):
+		file.write(write_helper_dummy_origin(HDMY[i]))
+	
+	file.write(compressed_size)
+	#HLPR index sorted alphabetically
+	file.write(HLPR)
+	
+	#All this can be empty, may not even be read by the game.
+	file.write(b'\x00\x00\x00\x00') #material
+	file.write(b'\x00\x00\x00\x00') #submesh
+	file.write(b'\x00\x00\x00\x00') #bone
+	file.write(b'\x00\x00\x00\x00')#boneindex
+	file.write(b'\x00') #pad
+	file.write(b'\x00\x00') #unk
+	file.write(b'\x00\x00') #unk
+
+	file.write(write_helper_matrix(matrix))
+	
 	
 #Utility import functions#
 class read_helper_point_origin:
@@ -199,7 +264,10 @@ def read_helper_matrix(file):
 	fmt = '<12f' #3x4, scale = (1,1,1) to make it 4x4 I beleive
 	_s = file.read(struct.calcsize(fmt))
 	f = struct.unpack(fmt, _s)
-	matrix = ((f[0]/100,f[1]/100,f[2]/100,1),(f[3]/100,f[4]/100,f[5]/100,1),(f[6]/100,f[7]/100,f[8]/100,1),(f[9]/100,f[10]/100,f[11]/100,1))
+	matrix = (	(f[0]/100,f[ 1]/100,f[ 2]/100,1),
+				(f[3]/100,f[ 4]/100,f[ 5]/100,1),
+				(f[6]/100,f[ 7]/100,f[ 8]/100,1),
+				(f[9]/100,f[10]/100,f[11]/100,1)) 
 	return matrix
 
 def read_helper_origin(file):
@@ -207,7 +275,7 @@ def read_helper_origin(file):
 	_s = file.read(struct.calcsize(fmt))
 	matrix = struct.unpack(fmt, _s)
 	return matrix
-	
+
 def read_string(file):
 	#read in the characters till we get a null character
 	s = b''
@@ -217,10 +285,34 @@ def read_string(file):
 			break
 		s += c
 	crc = (0xffffffff - zlib.crc32(s,0xffffffff))
-
 	#remove the null character from the string
 	return str(s, "utf-8", "replace"), crc
-	
+
+def write_helper_point_origin(point):
+	point_out = struct.pack('<I',(0xffffffff - zlib.crc32(point.name[5:].encode('utf-8'),0xffffffff)))
+	point_out += struct.pack('<f',point.location.x*100)
+	point_out += struct.pack('<f',point.location.y*100)
+	point_out += struct.pack('<f',point.location.z*100)
+	point_out += (b'\xFF\xFF\xFF\xFF')
+	return point_out
+
+def write_helper_dummy_origin(dummy):
+	dummy_out = struct.pack('<I',(0xffffffff - zlib.crc32(dummy.name[5:].encode('utf-8'),0xffffffff)))
+	dummy_out += write_helper_matrix(dummy.matrix_local)
+	dummy_out += (b'\xFF\xFF\xFF\xFF')
+	return dummy_out
+
+def write_helper_matrix(m):
+	fmt = '<12f' #3x4, scale = (1,1,1) to make it 4x4 I beleive
+	return struct.pack(fmt,m[0][0]*100,m[1][0]*100,m[2][0]*100,
+						   m[0][1]*100,m[1][1]*100,m[2][1]*100,
+						   m[0][2]*100,m[1][2]*100,m[2][2]*100,
+						   m[0][3]*100,m[1][3]*100,m[2][3]*100)
+
+def write_helper_origin(o):
+	fmt = '<10f' #3x3, scale = 1
+	return struct.pack(fmt,o[0],o[1],o[2],o[3],o[4],o[5],o[6],o[7],o[8],o[9])
+
 def write_string(string):
 	encoded_text = string.encode('utf-8')
 	return encoded_text + b'\x00'
